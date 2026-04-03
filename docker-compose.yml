@@ -1,0 +1,29 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: multimodal-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dashboard
+    container_name: multimodal-dashboard
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+      - redis
+    environment:
+      API_BASE_URL: http://api:8000
+
+  redis:
+    image: redis:7
+    container_name: multimodal-redis
+    ports:
+      - "6379:6379"

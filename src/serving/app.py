@@ -1,91 +1,79 @@
-from typing import List, Optional #data가 무슨 타입인지 힌트
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from pydantic import BaseModel
+
+from src.common.config import load_config
+from src.common.redis_client import get_redis_client
+from src.recommendation.service import run_recommendation
+from src.search.service import run_search
+from src.simulator.service import get_simulator_status
+from src.serving.schemas import (
+    RecommendationResponse,
+    SearchRequest,
+    SearchResponse,
+)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    cfg = load_config()
+    app.state.config = cfg
+    app.state.redis = None
+    app.state.redis_ok = False
+
+    try:
+        redis_client = get_redis_client()
+        redis_client.ping()
+        app.state.redis = redis_client
+        app.state.redis_ok = True
+        print("Redis connection: OK")
+    except Exception as e:
+        print(f"Redis connection failed: {e}")
+
+    yield
 
 
 app = FastAPI(
     title="Multimodal Search & Recommendation API",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan,
 )
-
-
-class SearchRequest(BaseModel):  ## 사용자가 보낼 query 구조
-    query_text: Optional[str] = None
-    top_k: int = 10
-
-
-class SearchResultItem(BaseModel):
-    product_id: str
-    name: str
-    score: float   #나중에 실재 점수
-    price: int
-
-
-class SearchResponse(BaseModel):
-    search_type: str     #검색 방식 image/ text/ image+text
-    results: List[SearchResultItem]
-    latency_ms: float
-    total_count: int
-
-# recommand pipeline 단계별 시간
-class PipelineLatency(BaseModel):
-    candidate_ms: float
-    ranking_ms: float
-    reranking_ms: float
-    total_ms: float
-
-
-#recommandation을 위한 최근 정보 (redis 로다가)
-class SessionContext(BaseModel):
-    recent_clicks: List[str]
-    session_interest: Optional[str] = None
-
-
-
-#개추받은 상품의 구조
-class RecommendationItem(BaseModel):
-    product_id: str
-    score: float
-    reason: str
-    is_exploration: bool
-
-#개추 API 최종 출력 형식
-class RecommendationResponse(BaseModel):
-    user_id: str
-    recommendations: List[RecommendationItem]
-    pipeline_latency: PipelineLatency
-    session_context: SessionContext
 
 
 @app.get("/")
 def root():
-    return {"message": "hello"}
+    return {
+        "message": "hello",
+        "app_name": app.state.config["app"]["name"],
+        "redis_connected": app.state.redis_ok,
+    }
+
+
+@app.get("/api/system/status")
+def system_status():
+    cfg = app.state.config
+    return {
+        "app_name": cfg["app"]["name"],
+        "api_port": cfg["server"]["api_port"],
+        "redis": {
+            "host": cfg["redis"]["host"],
+            "port": cfg["redis"]["port"],
+            "connected": app.state.redis_ok,
+        },
+    }
+
+
+@app.get("/api/simulator/status")
+def simulator_status():
+    return get_simulator_status()
 
 
 @app.post("/api/search", response_model=SearchResponse)
 def search(request: SearchRequest):
-    return SearchResponse(
-        search_type="text",
-        results=[],
-        latency_ms=0.0,
-        total_count=0
-    )
+    return run_search(request)
 
 
 @app.get("/api/recommend", response_model=RecommendationResponse)
 def recommend(user_id: str, top_n: int = 10):
-    return RecommendationResponse(
-        user_id=user_id,
-        recommendations=[],
-        pipeline_latency=PipelineLatency(
-            candidate_ms=0.0,
-            ranking_ms=0.0,
-            reranking_ms=0.0,
-            total_ms=0.0
-        ),
-        session_context=SessionContext(
-            recent_clicks=[],
-            session_interest=None
-        )
-    )
+    redis_client = app.state.redis if app.state.redis_ok else None
+    return run_recommendation(user_id=user_id, top_n=top_n, redis_client=redis_client)

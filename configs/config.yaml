@@ -1,0 +1,16 @@
+app:
+  name: multimodal-recsys
+  random_seed: 42
+
+server:
+  api_port: 8000
+  dashboard_port: 8501
+
+redis:
+  host: redis
+  port: 6379
+  db: 0
+
+paths:
+  data_dir: data/
+  artifacts_dir: artifacts/
