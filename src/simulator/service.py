@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 import random
-
+import time
 import pandas as pd
 
 from src.common.config import load_config
@@ -126,16 +126,67 @@ def sample_favorite_brand(
     raise ValueError(f"Unsupported favorite brand sampling mode: {mode}")
 
 
+def _get_raw_data_dir(config: dict[str, Any]) -> Path:
+    simulator_output_cfg = config["simulator"].get("output", {})
+    raw_dir = simulator_output_cfg.get("raw_dir")
+
+    if raw_dir:
+        return Path(raw_dir)
+
+    return Path(config["paths"]["data_dir"]) / "raw"
+
+
+def _get_output_format(config: dict[str, Any]) -> str:
+    return str(config["simulator"].get("output_format", "csv"))
+
+
+def _build_default_filename(stem: str, output_format: str) -> str:
+    return f"{stem}.{output_format}"
+
+
+def _resolve_simulator_file_path(
+    config: dict[str, Any],
+    file_key: str,
+    default_stem: str,
+) -> Path:
+    raw_dir = _get_raw_data_dir(config)
+    simulator_output_cfg = config["simulator"].get("output", {})
+    output_format = _get_output_format(config)
+
+    configured_name = simulator_output_cfg.get(file_key)
+    if configured_name:
+        return raw_dir / configured_name
+
+    return raw_dir / _build_default_filename(default_stem, output_format)
+
+
 def get_simulator_status() -> dict[str, Any]:
     config = load_config()
     sim_cfg = config["simulator"]
 
+    products_path = _resolve_simulator_file_path(config, "products_file", "products")
+    users_path = _resolve_simulator_file_path(config, "users_file", "users")
+    events_path = _resolve_simulator_file_path(config, "events_file", "events")
+
+    day2_ready = products_path.exists() and users_path.exists()
+    day3_ready = events_path.exists()
+
     return {
-        "status": "day2_ready",
-        "message": "Simulator Day 2 structure is ready.",
+        "status": "day3_ready" if day3_ready else "day2_ready" if day2_ready else "not_ready",
+        "message": "Simulator status checked from generated files.",
         "output_format": sim_cfg["output_format"],
         "scale": sim_cfg["scale"],
         "target_scale": sim_cfg["target_scale"],
+        "paths": {
+            "products": str(products_path),
+            "users": str(users_path),
+            "events": str(events_path),
+        },
+        "exists": {
+            "products": products_path.exists(),
+            "users": users_path.exists(),
+            "events": events_path.exists(),
+        },
     }
 
 
@@ -241,9 +292,10 @@ def save_dataframe(df: pd.DataFrame, output_path: Path, output_format: str) -> N
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if output_format == "csv":
-        df.to_csv(output_path.with_suffix(".csv"), index=False)
+        final_path = output_path if output_path.suffix == ".csv" else output_path.with_suffix(".csv")
+        df.to_csv(final_path, index=False)
     else:
-        raise ValueError(f"Unsupported output format for Day 2: {output_format}")
+        raise ValueError(f"Unsupported output format: {output_format}")
 
 
 def print_day2_summary(products_df: pd.DataFrame, users_df: pd.DataFrame) -> None:
@@ -270,12 +322,59 @@ def print_day2_summary(products_df: pd.DataFrame, users_df: pd.DataFrame) -> Non
         print(loyalists["favorite_brand"].value_counts())
 
 
+def print_day3_summary(events_df: pd.DataFrame) -> None:
+    print("\n[Events by type]")
+    print(events_df["event_type"].value_counts())
+
+    print("\n[Events by persona]")
+    persona_event_counts = events_df.groupby(["persona", "event_type"]).size().unstack(fill_value=0)
+    print(persona_event_counts)
+
+    total_sessions = events_df["session_id"].nunique()
+    total_users = events_df["user_id"].nunique()
+
+    print("\n[Entity summary]")
+    print(f"total_events: {len(events_df)}")
+    print(f"total_sessions: {total_sessions}")
+    print(f"total_users: {total_users}")
+
+    print("\n[Session length summary]")
+    session_lengths = events_df.groupby("session_id").size()
+    print(session_lengths.describe().round(2))
+
+    view_counts = events_df[events_df["event_type"] == "view"].groupby("session_id").size()
+    if not view_counts.empty:
+        print("\n[Views per session summary]")
+        print(view_counts.describe().round(2))
+
+    search_sessions = set(events_df.loc[events_df["event_type"] == "search", "session_id"])
+    cart_sessions = set(events_df.loc[events_df["event_type"] == "cart", "session_id"])
+    purchase_sessions = set(events_df.loc[events_df["event_type"] == "purchase", "session_id"])
+
+    total_search_sessions = max(len(search_sessions), 1)
+
+    print("\n[Session conversion summary]")
+    print(f"cart_session_rate: {len(cart_sessions) / total_search_sessions:.3f}")
+    print(f"purchase_session_rate: {len(purchase_sessions) / total_search_sessions:.3f}")
+
+    purchase_df = events_df[events_df["event_type"] == "purchase"]
+    if not purchase_df.empty:
+        print("\n[Purchase by top_category]")
+        print(purchase_df["top_category"].value_counts())
+
+        print("\n[Purchase by persona]")
+        print(purchase_df["persona"].value_counts())
+
+        if "brand_tier" in purchase_df.columns:
+            print("\n[Purchase by brand_tier]")
+            print(purchase_df["brand_tier"].value_counts())
+
+
 def run_day2_sample_generation() -> dict[str, Any]:
     config = load_config()
     rng = random.Random(int(config["app"]["random_seed"]))
 
-    data_dir = Path(config["paths"]["data_dir"])
-    output_format = config["simulator"]["output_format"]
+    output_format = _get_output_format(config)
 
     products = generate_products(config, rng)
     users = generate_users(config, rng)
@@ -283,8 +382,11 @@ def run_day2_sample_generation() -> dict[str, Any]:
     products_df = pd.DataFrame(products)
     users_df = pd.DataFrame(users)
 
-    save_dataframe(products_df, data_dir / "raw" / "products", output_format)
-    save_dataframe(users_df, data_dir / "raw" / "users", output_format)
+    products_path = _resolve_simulator_file_path(config, "products_file", "products")
+    users_path = _resolve_simulator_file_path(config, "users_file", "users")
+
+    save_dataframe(products_df, products_path, output_format)
+    save_dataframe(users_df, users_path, output_format)
 
     print_day2_summary(products_df, users_df)
 
@@ -292,10 +394,62 @@ def run_day2_sample_generation() -> dict[str, Any]:
         "products": len(products_df),
         "users": len(users_df),
         "output_format": output_format,
-        "data_dir": str(data_dir / "raw"),
+        "products_path": str(products_path),
+        "users_path": str(users_path),
+        "data_dir": str(_get_raw_data_dir(config)),
+    }
+
+
+def run_day3_event_generation() -> dict[str, Any]:
+    config = load_config()
+    rng = random.Random(int(config["app"]["random_seed"]))
+    output_format = _get_output_format(config)
+
+    products_path = _resolve_simulator_file_path(config, "products_file", "products")
+    users_path = _resolve_simulator_file_path(config, "users_file", "users")
+    events_path = _resolve_simulator_file_path(config, "events_file", "events")
+
+    if not products_path.exists():
+        raise FileNotFoundError(f"products file not found: {products_path}")
+    if not users_path.exists():
+        raise FileNotFoundError(f"users file not found: {users_path}")
+
+    products_df = pd.read_csv(products_path)
+    users_df = pd.read_csv(users_path)
+
+    from src.simulator.events import generate_events, validate_events
+
+    events_df = generate_events(
+        users_df=users_df,
+        products_df=products_df,
+        config=config,
+        rng=rng,
+    )
+
+    validation_issues = validate_events(events_df)
+    if validation_issues:
+        print("\n[Event validation issues]")
+        for issue in validation_issues[:20]:
+            print("-", issue)
+        raise ValueError(
+            f"Event validation failed with {len(validation_issues)} issue(s)."
+        )
+
+    save_dataframe(events_df, events_path, output_format)
+    print_day3_summary(events_df)
+
+    return {
+        "events": len(events_df),
+        "output_format": output_format,
+        "events_path": str(events_path),
+        "products_path": str(products_path),
+        "users_path": str(users_path),
+        "validation_passed": True,
     }
 
 
 if __name__ == "__main__":
-    result = run_day2_sample_generation()
-    print("[Simulator Day2]", result)
+    start = time.perf_counter()
+    result = run_day3_event_generation()
+    print("[Simulator Day3/Day4 Checked]", result)
+    print(f"[Elapsed] {time.perf_counter() - start:.2f} sec")

@@ -18,10 +18,16 @@ paths:
 simulator:
   output_format: csv
 
+  output:
+    raw_dir: data/raw
+    products_file: products.csv
+    users_file: users.csv
+    events_file: events.csv
+
   scale:
-    products: 1000
-    users: 200
-    events: 5000
+    products: 50000
+    users: 10000
+    events: 1000000
 
   target_scale:
     products: 50000
@@ -245,6 +251,49 @@ simulator:
       preferred_brand_tiers: [low_price, mid_price]
       budget_min: 20000
       budget_max: 160000
+
+  events:
+    lookback_days: 30
+    budget_tolerance_multiplier: 1.25
+
+    query_pool:
+      의류: [후드티, 맨투맨, 니트, 셔츠, 청바지, 슬랙스, 자켓]
+      신발: [스니커즈, 러닝화, 부츠, 로퍼, 샌들]
+      액세서리: [백팩, 볼캡, 지갑, 벨트, 머플러]
+
+    transition_prob:
+      trendsetter:
+        view_to_cart: 0.24
+        cart_to_purchase: 0.34
+        direct_purchase_from_view: 0.06
+      pragmatist:
+        view_to_cart: 0.16
+        cart_to_purchase: 0.28
+        direct_purchase_from_view: 0.03
+      value_seeker:
+        view_to_cart: 0.18
+        cart_to_purchase: 0.24
+        direct_purchase_from_view: 0.02
+      brand_loyalist:
+        view_to_cart: 0.26
+        cart_to_purchase: 0.38
+        direct_purchase_from_view: 0.05
+      impulse_buyer:
+        view_to_cart: 0.31
+        cart_to_purchase: 0.42
+        direct_purchase_from_view: 0.09
+      careful_explorer:
+        view_to_cart: 0.12
+        cart_to_purchase: 0.20
+        direct_purchase_from_view: 0.02
+
+    views_per_session_by_persona:
+      trendsetter: [3, 6]
+      pragmatist: [2, 4]
+      value_seeker: [2, 5]
+      brand_loyalist: [2, 5]
+      impulse_buyer: [2, 4]
+      careful_explorer: [3, 6]
 
   split:
     train_ratio: 0.8
