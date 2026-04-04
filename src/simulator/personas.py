@@ -21,8 +21,8 @@ class PersonaProfile:
     category_prior: dict[str, float]
     price_sensitivity: float
     base_conversion_rate: float
-    preferred_brand_tiers: list[str]
-    favorite_brand_pool: list[str]
+    preferred_price_tiers: list[str]
+    preferred_top_category_pool: list[str]
     budget_min: int
     budget_max: int
 
@@ -51,13 +51,17 @@ def load_persona_profiles(config: dict[str, Any]) -> dict[str, PersonaProfile]:
             category_prior=normalized_prior,
             price_sensitivity=float(values["price_sensitivity"]),
             base_conversion_rate=float(values["base_conversion_rate"]),
-            preferred_brand_tiers=list(values.get("preferred_brand_tiers", [])),
-            favorite_brand_pool=list(values.get("favorite_brand_pool", [])),
+            preferred_price_tiers=list(values.get("preferred_price_tiers", [])),
+            preferred_top_category_pool=list(values.get("preferred_top_category_pool", [])),
             budget_min=int(values["budget_min"]),
             budget_max=int(values["budget_max"]),
         )
 
-        if profile.distribution_mode not in {"price_based", "prior_based", "brand_anchor"}:
+        if profile.distribution_mode not in {
+            "price_based",
+            "prior_based",
+            "top_category_anchor",
+        }:
             raise ValueError(
                 f"Unsupported distribution_mode for persona '{name}': "
                 f"{profile.distribution_mode}"

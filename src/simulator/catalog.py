@@ -1,196 +1,210 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
 from typing import Any
 import random
 
-
-def normalize_distribution(distribution: dict[str, float]) -> dict[str, float]:
-    total = sum(distribution.values())
-    if total <= 0:
-        raise ValueError("Distribution total must be positive.")
-    return {key: value / total for key, value in distribution.items()}
+import numpy as np
+import pandas as pd
 
 
-@dataclass
-class ProductRecord:
-    product_id: str
-    name: str
-    brand: str
-    brand_tier: str
-    top_category: str
-    mid_category: str
-    leaf_category: str
-    color: str
-    style_tag: str
-    base_price: int
-    price: int
-    discount_rate: float
-    is_new: bool
-    popularity_seed: float
-    created_at: str
-    description: str
+_HM_CACHE: dict[str, pd.DataFrame] = {}
+
+DEFAULT_TOP_CATEGORIES = [
+    "Ladieswear",
+    "Baby/Children",
+    "Divided",
+    "Menswear",
+    "Sport",
+]
 
 
-def build_top_category_tree(
-    structure: dict[str, dict[str, list[str]]],
-) -> dict[str, list[tuple[str, str]]]:
-    tree: dict[str, list[tuple[str, str]]] = {}
-    for top_category, mid_map in structure.items():
-        tree[top_category] = []
-        for mid_category, leaf_categories in mid_map.items():
-            for leaf_category in leaf_categories:
-                tree[top_category].append((mid_category, leaf_category))
-    return tree
-
-
-def build_top_category_reference_prices(config: dict[str, Any]) -> dict[str, float]:
-    catalog_cfg = config["simulator"]["catalog"]
-    structure = catalog_cfg["structure"]
-    leaf_price_map = catalog_cfg["leaf_category_base_price"]
-
-    references: dict[str, float] = {}
-
-    for top_category, mid_map in structure.items():
-        leaf_reference_prices: list[float] = []
-        for leaf_categories in mid_map.values():
-            for leaf_category in leaf_categories:
-                price_cfg = leaf_price_map[leaf_category]
-                ref_price = 0.4 * float(price_cfg["min"]) + 0.6 * float(price_cfg["max"])
-                leaf_reference_prices.append(ref_price)
-
-        references[top_category] = sum(leaf_reference_prices) / len(leaf_reference_prices)
-
-    return references
-
-
-def get_brand_tier(config: dict[str, Any], brand: str) -> str:
-    brand_meta = config["simulator"]["catalog"]["brand_catalog"][brand]
-    return str(brand_meta["tier"])
-
-
-def sample_brand(
-    brand_catalog: dict[str, Any],
-    rng: random.Random,
-) -> tuple[str, dict[str, Any]]:
-    brand_names = list(brand_catalog.keys())
-    weights = [float(brand_catalog[name]["sampling_weight"]) for name in brand_names]
-    brand_name = rng.choices(brand_names, weights=weights, k=1)[0]
-    return brand_name, brand_catalog[brand_name]
-
-
-def sample_top_category_for_brand(
-    brand: str,
-    brand_category_affinity: dict[str, dict[str, float]],
-    rng: random.Random,
-) -> str:
-    affinity = normalize_distribution(
-        {k: float(v) for k, v in brand_category_affinity[brand].items()}
+def _normalize_article_id(series: pd.Series) -> pd.Series:
+    return (
+        series.astype(str)
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+        .str.zfill(10)
     )
-    categories = list(affinity.keys())
-    weights = [affinity[category] for category in categories]
-    return rng.choices(categories, weights=weights, k=1)[0]
 
 
-def sample_leaf_under_top(
-    top_category: str,
-    top_category_tree: dict[str, list[tuple[str, str]]],
-    rng: random.Random,
-) -> tuple[str, str]:
-    return rng.choice(top_category_tree[top_category])
+def _prepare_hm_catalog_df(config: dict[str, Any]) -> pd.DataFrame:
+    hm_cfg = config["simulator"]["catalog"]["external_hm"]
+    master_path = str(hm_cfg["products_master_path"])
+
+    if master_path in _HM_CACHE:
+        return _HM_CACHE[master_path].copy()
+
+    df = pd.read_csv(
+        master_path,
+        dtype={"product_id": str, "product_code": str},
+        parse_dates=["last_purchase_date"],
+    )
+
+    df["product_id"] = _normalize_article_id(df["product_id"])
+    df["product_code"] = (
+        df["product_code"]
+        .astype(str)
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+    )
+    df["name"] = df["name"].fillna("").astype(str)
+    df["description"] = df["description"].fillna("").astype(str)
+    df["color"] = df["color"].fillna("").astype(str)
+
+    df["top_category"] = df["top_category"].fillna("").astype(str).str.strip()
+    df["mid_category"] = df["mid_category"].fillna("").astype(str).str.strip()
+    df["leaf_category"] = df["leaf_category"].fillna("").astype(str).str.strip()
+
+    df["top_category"] = df["top_category"].replace("", "Unknown")
+    df["mid_category"] = df["mid_category"].replace("", "Unknown")
+    df["leaf_category"] = df["leaf_category"].replace("", "Unknown")
+
+    allowed_top_categories = list(
+        hm_cfg.get("allowed_top_categories", DEFAULT_TOP_CATEGORIES)
+    )
+    if allowed_top_categories:
+        df = df[df["top_category"].isin(allowed_top_categories)].copy()
+
+    df["price"] = pd.to_numeric(df["price"], errors="coerce")
+    global_price = float(df["price"].median())
+    df["price"] = df["price"].fillna(global_price)
+
+    low_q = float(hm_cfg.get("low_price_max_quantile", 0.55))
+    mid_q = float(hm_cfg.get("mid_price_max_quantile", 0.97))
+    low_cut = float(df["price"].quantile(low_q))
+    mid_cut = float(df["price"].quantile(mid_q))
+
+    def _price_to_tier(price: float) -> str:
+        if price <= low_cut:
+            return "low_price"
+        if price <= mid_cut:
+            return "mid_price"
+        return "luxury"
+
+    df["price_tier"] = df["price"].map(_price_to_tier)
+
+    df["purchase_count"] = (
+        pd.to_numeric(df["purchase_count"], errors="coerce")
+        .fillna(0)
+        .astype(int)
+    )
+    max_purchase = max(int(df["purchase_count"].max()), 1)
+    df["popularity_seed"] = (
+        df["purchase_count"] / max_purchase
+    ).clip(lower=0.0, upper=1.0)
+
+    new_days = int(hm_cfg.get("new_item_days_threshold", 30))
+    max_date = df["last_purchase_date"].max()
+    if pd.isna(max_date):
+        df["is_new"] = False
+    else:
+        df["is_new"] = (max_date - df["last_purchase_date"]).dt.days <= new_days
+        df["is_new"] = df["is_new"].fillna(False)
+
+    for optional_col, default_value in {
+        "product_group_name": "",
+        "garment_group_name": "",
+        "department_name": "",
+        "image_path": "",
+        "has_image": 0,
+        "source": "hm",
+    }.items():
+        if optional_col not in df.columns:
+            df[optional_col] = default_value
+
+    _HM_CACHE[master_path] = df.copy()
+    return df
 
 
-def sample_base_price(
-    leaf_category: str,
-    base_price_map: dict[str, dict[str, int]],
-    rng: random.Random,
-) -> int:
-    price_cfg = base_price_map[leaf_category]
-    return rng.randrange(int(price_cfg["min"]), int(price_cfg["max"]) + 1, 1000)
+def _sample_hm_products(config: dict[str, Any], rng: random.Random) -> list[dict[str, Any]]:
+    df = _prepare_hm_catalog_df(config)
+    product_count = int(config["simulator"]["scale"]["products"])
+
+    if product_count >= len(df):
+        sampled = df.copy()
+    else:
+        weights = (df["purchase_count"].astype(float).fillna(0.0) + 1.0).to_numpy()
+        probabilities = weights / weights.sum()
+
+        np_rng = np.random.default_rng(int(rng.random() * 1_000_000))
+        chosen_idx = np_rng.choice(
+            len(df),
+            size=product_count,
+            replace=False,
+            p=probabilities,
+        )
+        sampled = df.iloc[chosen_idx].copy()
+
+    sampled = sampled.sort_values(
+        ["purchase_count", "product_id"],
+        ascending=[False, True],
+    ).reset_index(drop=True)
+
+    records: list[dict[str, Any]] = []
+    for _, row in sampled.iterrows():
+        style_tags = "|".join(
+            [
+                tag
+                for tag in [
+                    row.get("product_group_name", ""),
+                    row.get("garment_group_name", ""),
+                    row.get("department_name", ""),
+                ]
+                if str(tag).strip()
+            ]
+        )
+
+        records.append(
+            {
+                "product_id": str(row["product_id"]).zfill(10),
+                "product_code": str(row["product_code"]),
+                "price_tier": row["price_tier"],
+                "top_category": row["top_category"],
+                "mid_category": row["mid_category"],
+                "leaf_category": row["leaf_category"],
+                "price": float(row["price"]),
+                "discount_rate": 0.0,
+                "color": row["color"],
+                "style_tags": style_tags,
+                "popularity_seed": round(float(row["popularity_seed"]), 4),
+                "is_new": bool(row["is_new"]),
+                "name": row["name"],
+                "description": row["description"],
+                "image_path": row["image_path"],
+                "has_image": int(row["has_image"]),
+                "source": row["source"],
+            }
+        )
+
+    return records
 
 
 def generate_products(config: dict[str, Any], rng: random.Random) -> list[dict[str, Any]]:
-    simulator_cfg = config["simulator"]
-    catalog_cfg = simulator_cfg["catalog"]
-    product_count = int(simulator_cfg["scale"]["products"])
+    return _sample_hm_products(config, rng)
 
-    structure = catalog_cfg["structure"]
-    top_category_tree = build_top_category_tree(structure)
-    brand_catalog = catalog_cfg["brand_catalog"]
-    base_price_map = catalog_cfg["leaf_category_base_price"]
-    brand_category_affinity = catalog_cfg["brand_category_affinity"]
 
-    colors = list(catalog_cfg["colors"])
-    style_tags = list(catalog_cfg["style_tags"])
+def build_top_category_reference_prices(config: dict[str, Any]) -> dict[str, float]:
+    df = _prepare_hm_catalog_df(config)
+    grouped = df.groupby("top_category")["price"].median().to_dict()
+    return {str(k): float(v) for k, v in grouped.items()}
 
-    now = datetime.utcnow()
-    records: list[dict[str, Any]] = []
 
-    for idx in range(product_count):
-        brand, brand_meta = sample_brand(brand_catalog, rng)
-        brand_tier = str(brand_meta["tier"])
+def get_top_category_price_tier(config: dict[str, Any], top_category: str) -> str:
+    df = _prepare_hm_catalog_df(config)
+    matched = df[df["top_category"] == top_category]
+    if matched.empty:
+        return "mid_price"
 
-        top_category = sample_top_category_for_brand(
-            brand=brand,
-            brand_category_affinity=brand_category_affinity,
-            rng=rng,
-        )
-        mid_category, leaf_category = sample_leaf_under_top(
-            top_category=top_category,
-            top_category_tree=top_category_tree,
-            rng=rng,
-        )
+    hm_cfg = config["simulator"]["catalog"]["external_hm"]
+    low_q = float(hm_cfg.get("low_price_max_quantile", 0.55))
+    mid_q = float(hm_cfg.get("mid_price_max_quantile", 0.97))
 
-        color = rng.choice(colors)
-        style_tag = rng.choice(style_tags)
+    low_cut = float(df["price"].quantile(low_q))
+    mid_cut = float(df["price"].quantile(mid_q))
+    category_median_price = float(matched["price"].median())
 
-        base_price = sample_base_price(
-            leaf_category=leaf_category,
-            base_price_map=base_price_map,
-            rng=rng,
-        )
-
-        multiplier = rng.uniform(
-            float(brand_meta["multiplier_min"]),
-            float(brand_meta["multiplier_max"]),
-        )
-
-        days_ago = rng.randint(0, 180)
-        created_dt = now - timedelta(days=days_ago)
-        is_new = days_ago <= 7
-
-        discount_rate = round(rng.uniform(0.0, float(brand_meta["discount_max"])), 2)
-        popularity_seed = round(rng.uniform(0.0, 1.0), 4)
-
-        raw_price = base_price * multiplier
-        discounted_price = int(round(raw_price * (1 - discount_rate), -3))
-        price = max(10000, discounted_price)
-
-        name = f"{brand} {color} {leaf_category}"
-        description = (
-            f"{top_category}/{mid_category}/{leaf_category} 카테고리의 "
-            f"{style_tag} 스타일 상품"
-        )
-
-        record = ProductRecord(
-            product_id=f"P{idx + 1:06d}",
-            name=name,
-            brand=brand,
-            brand_tier=brand_tier,
-            top_category=top_category,
-            mid_category=mid_category,
-            leaf_category=leaf_category,
-            color=color,
-            style_tag=style_tag,
-            base_price=base_price,
-            price=price,
-            discount_rate=discount_rate,
-            is_new=is_new,
-            popularity_seed=popularity_seed,
-            created_at=created_dt.isoformat(),
-            description=description,
-        )
-        records.append(asdict(record))
-
-    return records
+    if category_median_price <= low_cut:
+        return "low_price"
+    if category_median_price <= mid_cut:
+        return "mid_price"
+    return "luxury"

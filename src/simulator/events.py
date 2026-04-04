@@ -25,7 +25,7 @@ DEFAULT_TRANSITION_PROB = {
         "cart_to_purchase": 0.24,
         "direct_purchase_from_view": 0.02,
     },
-    "brand_loyalist": {
+    "top_category_loyalist": {
         "view_to_cart": 0.26,
         "cart_to_purchase": 0.38,
         "direct_purchase_from_view": 0.05,
@@ -46,7 +46,7 @@ DEFAULT_VIEW_BOUNDS = {
     "trendsetter": (3, 6),
     "pragmatist": (2, 4),
     "value_seeker": (2, 5),
-    "brand_loyalist": (2, 5),
+    "top_category_loyalist": (2, 5),
     "impulse_buyer": (2, 4),
     "careful_explorer": (3, 6),
 }
@@ -61,14 +61,29 @@ REQUIRED_EVENT_COLUMNS = [
     "query_text",
     "product_id",
     "top_category",
-    "brand",
-    "brand_tier",
+    "price_tier",
     "price",
     "position",
     "source_reason",
 ]
 
 ALLOWED_EVENT_TYPES = {"search", "view", "cart", "purchase"}
+
+DEFAULT_HM_TOP_CATEGORIES = [
+    "Ladieswear",
+    "Baby/Children",
+    "Divided",
+    "Menswear",
+    "Sport",
+]
+
+
+def _get_simulator_cfg(config: dict[str, Any]) -> dict[str, Any]:
+    return config.get("simulator") or {}
+
+
+def _get_events_cfg(config: dict[str, Any]) -> dict[str, Any]:
+    return _get_simulator_cfg(config).get("events") or {}
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -135,9 +150,11 @@ def _extract_fallback_categories(products_df: pd.DataFrame, pref_cols: list[str]
         return [col.replace("category_pref_", "", 1) for col in pref_cols]
 
     if "top_category" in products_df.columns:
-        return sorted(products_df["top_category"].dropna().astype(str).unique().tolist())
+        categories = sorted(products_df["top_category"].dropna().astype(str).unique().tolist())
+        if categories:
+            return categories
 
-    return ["의류", "신발", "액세서리"]
+    return DEFAULT_HM_TOP_CATEGORIES
 
 
 def _sample_focus_category(
@@ -159,18 +176,18 @@ def _sample_focus_category(
         weights.append(max(weight, 0.0))
 
     if sum(weights) <= 0:
+        preferred = str(user_row.get("preferred_top_category", "") or "").strip()
+        if preferred and preferred in fallback_categories:
+            return preferred
         return rng.choice(fallback_categories)
 
     return rng.choices(categories, weights=weights, k=1)[0]
 
 
 def _get_transition_prob(config: dict[str, Any], persona: str) -> dict[str, float]:
-    configured = (
-        config.get("simulator", {})
-        .get("events", {})
-        .get("transition_prob", {})
-        .get(persona)
-    )
+    events_cfg = _get_events_cfg(config)
+    transition_cfg = events_cfg.get("transition_prob") or {}
+    configured = transition_cfg.get(persona)
 
     if configured:
         return {
@@ -185,12 +202,9 @@ def _get_transition_prob(config: dict[str, Any], persona: str) -> dict[str, floa
 
 
 def _get_view_bounds(config: dict[str, Any], persona: str) -> tuple[int, int]:
-    configured = (
-        config.get("simulator", {})
-        .get("events", {})
-        .get("views_per_session_by_persona", {})
-        .get(persona)
-    )
+    events_cfg = _get_events_cfg(config)
+    view_cfg = events_cfg.get("views_per_session_by_persona") or {}
+    configured = view_cfg.get(persona)
 
     if isinstance(configured, list) and len(configured) == 2:
         lo = int(configured[0])
@@ -247,11 +261,14 @@ def _build_product_store(products_df: pd.DataFrame) -> dict[str, Any]:
     ).fillna(0.5)
 
     top_category = _series_or_default("top_category", "").fillna("").astype(str).to_numpy()
-    brand = _series_or_default("brand", "").fillna("").astype(str).to_numpy()
-    brand_tier = _series_or_default("brand_tier", "").fillna("").astype(str).to_numpy()
+    price_tier = _series_or_default("price_tier", "").fillna("").astype(str).to_numpy()
     color = _series_or_default("color", "").fillna("").astype(str).to_numpy()
     leaf_category = _series_or_default("leaf_category", "").fillna("").astype(str).to_numpy()
-    product_id = _series_or_default("product_id", "").fillna("").astype(str).to_numpy()
+
+    product_id_series = _series_or_default("product_id", "").fillna("").astype(str)
+    product_id_series = product_id_series.str.replace(r"\.0$", "", regex=True).str.zfill(10)
+    product_id = product_id_series.to_numpy()
+
     is_new = _series_or_default("is_new", False).fillna(False).astype(bool).to_numpy()
 
     all_indices = np.arange(n_rows, dtype=np.int32)
@@ -263,8 +280,7 @@ def _build_product_store(products_df: pd.DataFrame) -> dict[str, Any]:
     return {
         "all_indices": all_indices,
         "top_category": top_category,
-        "brand": brand,
-        "brand_tier": brand_tier,
+        "price_tier": price_tier,
         "price": price.to_numpy(dtype=np.float64),
         "popularity_seed": popularity_seed.to_numpy(dtype=np.float64),
         "is_new": is_new,
@@ -284,11 +300,8 @@ def _select_candidate_indices(
     indices = store["category_to_indices"].get(focus_category, store["all_indices"])
 
     budget = _extract_budget(user_row)
-    tolerance = float(
-        config.get("simulator", {})
-        .get("events", {})
-        .get("budget_tolerance_multiplier", 1.25)
-    )
+    events_cfg = _get_events_cfg(config)
+    tolerance = float(events_cfg.get("budget_tolerance_multiplier", 1.25))
 
     if budget is not None and indices.size > 0:
         filtered = indices[store["price"][indices] <= budget * tolerance]
@@ -308,12 +321,9 @@ def _build_query_text(
     config: dict[str, Any],
     rng: random.Random,
 ) -> str:
-    query_pool = (
-        config.get("simulator", {})
-        .get("events", {})
-        .get("query_pool", {})
-        .get(focus_category, [])
-    )
+    events_cfg = _get_events_cfg(config)
+    query_pool_cfg = events_cfg.get("query_pool") or {}
+    query_pool = query_pool_cfg.get(focus_category, [])
 
     if query_pool:
         base_token = rng.choice(list(query_pool))
@@ -339,26 +349,23 @@ def _score_candidate_indices(
     user_row: pd.Series,
     config: dict[str, Any],
 ) -> np.ndarray:
-    favorite_brand = str(user_row.get("favorite_brand", "") or "").strip()
-    preferred_tiers = _parse_list_like(user_row.get("preferred_brand_tiers"))
+    preferred_top_category = str(user_row.get("preferred_top_category", "") or "").strip()
+    preferred_tiers = _parse_list_like(user_row.get("preferred_price_tiers"))
     budget = _extract_budget(user_row)
 
-    tolerance = float(
-        config.get("simulator", {})
-        .get("events", {})
-        .get("budget_tolerance_multiplier", 1.25)
-    )
+    events_cfg = _get_events_cfg(config)
+    tolerance = float(events_cfg.get("budget_tolerance_multiplier", 1.25))
 
     weights = np.ones(candidate_indices.shape[0], dtype=np.float64)
 
-    candidate_brands = store["brand"][candidate_indices]
-    candidate_tiers = store["brand_tier"][candidate_indices]
+    candidate_categories = store["top_category"][candidate_indices]
+    candidate_tiers = store["price_tier"][candidate_indices]
     candidate_prices = store["price"][candidate_indices]
     candidate_popularity = store["popularity_seed"][candidate_indices]
     candidate_is_new = store["is_new"][candidate_indices]
 
-    if favorite_brand:
-        weights *= np.where(candidate_brands == favorite_brand, 3.0, 1.0)
+    if preferred_top_category:
+        weights *= np.where(candidate_categories == preferred_top_category, 1.8, 1.0)
 
     if preferred_tiers:
         weights *= np.where(np.isin(candidate_tiers, preferred_tiers), 1.6, 1.0)
@@ -422,8 +429,7 @@ def _make_product_event(
         "query_text": query_text,
         "product_id": store["product_id"][product_idx],
         "top_category": store["top_category"][product_idx],
-        "brand": store["brand"][product_idx],
-        "brand_tier": store["brand_tier"][product_idx],
+        "price_tier": store["price_tier"][product_idx],
         "price": float(store["price"][product_idx]),
         "position": position,
         "source_reason": source_reason,
@@ -462,8 +468,7 @@ def _build_session_events(
             "query_text": query_text,
             "product_id": None,
             "top_category": focus_category,
-            "brand": None,
-            "brand_tier": None,
+            "price_tier": None,
             "price": None,
             "position": None,
             "source_reason": "session_start",
@@ -658,12 +663,12 @@ def generate_events(
     pref_cols = _extract_preference_columns(users_df)
     fallback_categories = _extract_fallback_categories(products_df, pref_cols)
 
-    target_event_count = int(
-        config.get("simulator", {}).get("scale", {}).get("events", 5000)
-    )
-    lookback_days = int(
-        config.get("simulator", {}).get("events", {}).get("lookback_days", 30)
-    )
+    simulator_cfg = _get_simulator_cfg(config)
+    scale_cfg = simulator_cfg.get("scale") or {}
+    events_cfg = _get_events_cfg(config)
+
+    target_event_count = int(scale_cfg.get("events", 5000))
+    lookback_days = int(events_cfg.get("lookback_days", 30))
 
     now = datetime.utcnow()
     users_records = users_df.to_dict("records")

@@ -25,9 +25,9 @@ simulator:
     events_file: events.csv
 
   scale:
-    products: 50000
-    users: 10000
-    events: 1000000
+    products: 5000
+    users: 1000
+    events: 10000
 
   target_scale:
     products: 50000
@@ -40,9 +40,6 @@ simulator:
 
   user_preference:
     top_k_categories: 2
-
-  favorite_brand_sampling:
-    mode: uniform
 
   budget_adjustment_by_tier:
     low_price:
@@ -62,143 +59,28 @@ simulator:
       max_floor: 2500000
 
   catalog:
-    structure:
-      의류:
-        상의: [후드티, 니트, 셔츠, 맨투맨]
-        하의: [데님, 슬랙스, 조거팬츠, 쇼츠]
-        아우터: [패딩, 코트, 자켓, 가디건]
-      신발:
-        스니커즈: [러닝화, 캔버스화, 농구화]
-        부츠: [워커, 첼시부츠]
-        샌들: [슬리퍼, 스포츠샌들]
-      액세서리:
-        가방: [백팩, 크로스백, 토트백]
-        모자: [볼캡, 비니]
-        기타: [벨트, 머플러, 지갑]
+    source: external_hm
 
-    leaf_category_base_price:
-      후드티: {min: 39000, max: 109000}
-      니트: {min: 49000, max: 149000}
-      셔츠: {min: 39000, max: 129000}
-      맨투맨: {min: 39000, max: 99000}
-      데님: {min: 49000, max: 139000}
-      슬랙스: {min: 49000, max: 129000}
-      조거팬츠: {min: 39000, max: 99000}
-      쇼츠: {min: 29000, max: 79000}
-      패딩: {min: 149000, max: 349000}
-      코트: {min: 129000, max: 299000}
-      자켓: {min: 99000, max: 249000}
-      가디건: {min: 59000, max: 159000}
-      러닝화: {min: 79000, max: 179000}
-      캔버스화: {min: 49000, max: 109000}
-      농구화: {min: 109000, max: 229000}
-      워커: {min: 89000, max: 199000}
-      첼시부츠: {min: 99000, max: 219000}
-      슬리퍼: {min: 19000, max: 69000}
-      스포츠샌들: {min: 39000, max: 99000}
-      백팩: {min: 59000, max: 189000}
-      크로스백: {min: 49000, max: 169000}
-      토트백: {min: 69000, max: 199000}
-      볼캡: {min: 29000, max: 69000}
-      비니: {min: 25000, max: 59000}
-      벨트: {min: 29000, max: 99000}
-      머플러: {min: 39000, max: 119000}
-      지갑: {min: 49000, max: 159000}
-
-    brand_catalog:
-      MUSINSA_STANDARD:
-        tier: low_price
-        multiplier_min: 0.85
-        multiplier_max: 1.00
-        discount_max: 0.40
-        sampling_weight: 16
-      SPAO:
-        tier: low_price
-        multiplier_min: 0.80
-        multiplier_max: 0.95
-        discount_max: 0.45
-        sampling_weight: 14
-
-      NIKE:
-        tier: mid_price
-        multiplier_min: 1.10
-        multiplier_max: 1.90
-        discount_max: 0.30
-        sampling_weight: 12
-      ADIDAS:
-        tier: mid_price
-        multiplier_min: 1.00
-        multiplier_max: 1.70
-        discount_max: 0.30
-        sampling_weight: 10
-      COVERNAT:
-        tier: mid_price
-        multiplier_min: 0.95
-        multiplier_max: 1.30
-        discount_max: 0.35
-        sampling_weight: 10
-      THISISNEVERTHAT:
-        tier: mid_price
-        multiplier_min: 1.00
-        multiplier_max: 1.35
-        discount_max: 0.25
-        sampling_weight: 8
-      MLB:
-        tier: mid_price
-        multiplier_min: 1.00
-        multiplier_max: 1.50
-        discount_max: 0.30
-        sampling_weight: 8
-      DISCOVERY:
-        tier: mid_price
-        multiplier_min: 1.00
-        multiplier_max: 1.40
-        discount_max: 0.30
-        sampling_weight: 7
-      MATIN_KIM:
-        tier: mid_price
-        multiplier_min: 1.10
-        multiplier_max: 1.60
-        discount_max: 0.20
-        sampling_weight: 5
-
-      BURBERRY:
-        tier: luxury
-        multiplier_min: 8.00
-        multiplier_max: 12.00
-        discount_max: 0.12
-        sampling_weight: 2
-      MONCLER:
-        tier: luxury
-        multiplier_min: 10.00
-        multiplier_max: 15.00
-        discount_max: 0.10
-        sampling_weight: 1
-
-    brand_category_affinity:
-      MUSINSA_STANDARD: {의류: 0.70, 신발: 0.10, 액세서리: 0.20}
-      SPAO: {의류: 0.80, 신발: 0.05, 액세서리: 0.15}
-      NIKE: {의류: 0.35, 신발: 0.50, 액세서리: 0.15}
-      ADIDAS: {의류: 0.35, 신발: 0.50, 액세서리: 0.15}
-      COVERNAT: {의류: 0.65, 신발: 0.15, 액세서리: 0.20}
-      THISISNEVERTHAT: {의류: 0.60, 신발: 0.20, 액세서리: 0.20}
-      MLB: {의류: 0.35, 신발: 0.35, 액세서리: 0.30}
-      DISCOVERY: {의류: 0.55, 신발: 0.25, 액세서리: 0.20}
-      MATIN_KIM: {의류: 0.50, 신발: 0.10, 액세서리: 0.40}
-      BURBERRY: {의류: 0.45, 신발: 0.05, 액세서리: 0.50}
-      MONCLER: {의류: 0.85, 신발: 0.05, 액세서리: 0.10}
-
-    colors: [black, white, gray, navy, beige, brown, green]
-    style_tags: [casual, street, minimal, sporty, formal, outdoor]
+    external_hm:
+      products_master_path: data/external/hm/processed/hm_products_master.csv
+      low_price_max_quantile: 0.55
+      mid_price_max_quantile: 0.97
+      new_item_days_threshold: 30
+      allowed_top_categories: [Ladieswear, Baby/Children, Divided, Menswear, Sport]
 
   personas:
     trendsetter:
       ratio: 0.12
       distribution_mode: prior_based
-      category_prior: {의류: 0.45, 신발: 0.20, 액세서리: 0.35}
+      category_prior:
+        Divided: 0.40
+        Ladieswear: 0.25
+        Sport: 0.20
+        Menswear: 0.10
+        Baby/Children: 0.05
       price_sensitivity: 0.30
       base_conversion_rate: 0.07
-      preferred_brand_tiers: [mid_price, luxury]
+      preferred_price_tiers: [mid_price, luxury]
       budget_min: 50000
       budget_max: 300000
 
@@ -208,7 +90,7 @@ simulator:
       affordability_alpha: 0.70
       price_sensitivity: 0.55
       base_conversion_rate: 0.05
-      preferred_brand_tiers: [low_price, mid_price]
+      preferred_price_tiers: [low_price, mid_price]
       budget_min: 30000
       budget_max: 150000
 
@@ -218,37 +100,47 @@ simulator:
       affordability_alpha: 1.20
       price_sensitivity: 0.90
       base_conversion_rate: 0.04
-      preferred_brand_tiers: [low_price]
+      preferred_price_tiers: [low_price]
       budget_min: 10000
       budget_max: 100000
 
-    brand_loyalist:
+    top_category_loyalist:
       ratio: 0.14
-      distribution_mode: brand_anchor
-      favorite_brand_pool: [NIKE, ADIDAS, MLB, BURBERRY, MONCLER]
+      distribution_mode: top_category_anchor
+      preferred_top_category_pool: [Ladieswear, Baby/Children, Divided, Menswear, Sport]
       price_sensitivity: 0.35
       base_conversion_rate: 0.08
-      preferred_brand_tiers: []
+      preferred_price_tiers: []
       budget_min: 80000
       budget_max: 500000
 
     impulse_buyer:
       ratio: 0.16
       distribution_mode: prior_based
-      category_prior: {의류: 0.45, 신발: 0.35, 액세서리: 0.20}
+      category_prior:
+        Ladieswear: 0.30
+        Divided: 0.30
+        Sport: 0.20
+        Menswear: 0.15
+        Baby/Children: 0.05
       price_sensitivity: 0.35
       base_conversion_rate: 0.09
-      preferred_brand_tiers: [mid_price]
+      preferred_price_tiers: [mid_price]
       budget_min: 40000
       budget_max: 200000
 
     careful_explorer:
       ratio: 0.16
       distribution_mode: prior_based
-      category_prior: {의류: 0.34, 신발: 0.33, 액세서리: 0.33}
+      category_prior:
+        Ladieswear: 0.24
+        Baby/Children: 0.18
+        Divided: 0.18
+        Menswear: 0.20
+        Sport: 0.20
       price_sensitivity: 0.60
       base_conversion_rate: 0.03
-      preferred_brand_tiers: [low_price, mid_price]
+      preferred_price_tiers: [low_price, mid_price]
       budget_min: 20000
       budget_max: 160000
 
@@ -257,9 +149,11 @@ simulator:
     budget_tolerance_multiplier: 1.25
 
     query_pool:
-      의류: [후드티, 맨투맨, 니트, 셔츠, 청바지, 슬랙스, 자켓]
-      신발: [스니커즈, 러닝화, 부츠, 로퍼, 샌들]
-      액세서리: [백팩, 볼캡, 지갑, 벨트, 머플러]
+      Ladieswear: [Dress, Trousers, Sweater, Blouse, Top, Bra, Skirt, Jacket]
+      Baby/Children: [Trousers, T-shirt, Sweater, Dress, Shorts, Jacket, Garment Set, Leggings/Tights]
+      Divided: [Dress, Sweater, Trousers, T-shirt, Skirt, Vest top, Jacket, Blouse]
+      Menswear: [Trousers, Sweater, T-shirt, Shirt, Shorts, Hoodie, Jacket, Polo shirt]
+      Sport: [T-shirt, Leggings/Tights, Vest top, Trousers, Bra, Shorts, Top, Hoodie]
 
     transition_prob:
       trendsetter:
@@ -274,7 +168,7 @@ simulator:
         view_to_cart: 0.18
         cart_to_purchase: 0.24
         direct_purchase_from_view: 0.02
-      brand_loyalist:
+      top_category_loyalist:
         view_to_cart: 0.26
         cart_to_purchase: 0.38
         direct_purchase_from_view: 0.05
@@ -291,7 +185,7 @@ simulator:
       trendsetter: [3, 6]
       pragmatist: [2, 4]
       value_seeker: [2, 5]
-      brand_loyalist: [2, 5]
+      top_category_loyalist: [2, 5]
       impulse_buyer: [2, 4]
       careful_explorer: [3, 6]
 

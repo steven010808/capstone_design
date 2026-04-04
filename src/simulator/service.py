@@ -11,7 +11,7 @@ from src.simulator.personas import load_persona_profiles, sample_persona_name
 from src.simulator.catalog import (
     generate_products,
     build_top_category_reference_prices,
-    get_brand_tier,
+    get_top_category_price_tier,
 )
 
 
@@ -27,7 +27,7 @@ def build_price_based_distribution(
     affordability_alpha: float,
 ) -> dict[str, float]:
     raw_scores = {
-        category: 1.0 / (reference_price ** affordability_alpha)
+        category: 1.0 / (max(reference_price, 1e-6) ** affordability_alpha)
         for category, reference_price in top_category_reference_prices.items()
     }
     return normalize_distribution(raw_scores)
@@ -41,18 +41,22 @@ def build_prior_distribution(
         uniform = 1.0 / len(top_categories)
         return {category: uniform for category in top_categories}
 
-    filled = {category: float(category_prior.get(category, 0.0)) for category in top_categories}
+    filled = {
+        category: float(category_prior.get(category, 0.0))
+        for category in top_categories
+    }
     return normalize_distribution(filled)
 
 
-def build_brand_anchor_distribution(
-    favorite_brand: str,
-    brand_category_affinity: dict[str, dict[str, float]],
+def build_top_category_anchor_distribution(
+    preferred_top_category: str,
     top_categories: list[str],
+    anchor_weight: float = 4.0,
 ) -> dict[str, float]:
-    affinity = brand_category_affinity[favorite_brand]
-    filled = {category: float(affinity.get(category, 0.0)) for category in top_categories}
-    return normalize_distribution(filled)
+    raw_scores = {category: 1.0 for category in top_categories}
+    if preferred_top_category in raw_scores:
+        raw_scores[preferred_top_category] = anchor_weight
+    return normalize_distribution(raw_scores)
 
 
 def apply_noise_to_distribution(
@@ -90,13 +94,13 @@ def get_top_categories(
     return [category for category, _ in ranked[:top_k]]
 
 
-def adjust_budget_for_brand_tier(
+def adjust_budget_for_price_tier(
     budget_min: int,
     budget_max: int,
-    brand_tier: str,
+    price_tier: str,
     budget_adjustment_cfg: dict[str, Any],
 ) -> tuple[int, int]:
-    cfg = budget_adjustment_cfg[brand_tier]
+    cfg = budget_adjustment_cfg[price_tier]
 
     adjusted_min = int(max(
         budget_min * float(cfg["min_multiplier"]),
@@ -113,17 +117,22 @@ def adjust_budget_for_brand_tier(
     return adjusted_min, adjusted_max
 
 
-def sample_favorite_brand(
-    favorite_brand_pool: list[str],
+def sample_preferred_top_category(
+    preferred_top_category_pool: list[str],
     rng: random.Random,
-    sampling_cfg: dict[str, Any],
 ) -> str:
-    mode = str(sampling_cfg.get("mode", "uniform"))
+    if not preferred_top_category_pool:
+        raise ValueError("preferred_top_category_pool must not be empty.")
+    return rng.choice(preferred_top_category_pool)
 
-    if mode == "uniform":
-        return rng.choice(favorite_brand_pool)
 
-    raise ValueError(f"Unsupported favorite brand sampling mode: {mode}")
+def _normalize_article_id(series: pd.Series) -> pd.Series:
+    return (
+        series.astype(str)
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+        .str.zfill(10)
+    )
 
 
 def _get_raw_data_dir(config: dict[str, Any]) -> Path:
@@ -197,12 +206,26 @@ def generate_users(config: dict[str, Any], rng: random.Random) -> list[dict[str,
 
     catalog_cfg = simulator_cfg["catalog"]
     top_category_reference_prices = build_top_category_reference_prices(config)
-    top_categories = list(top_category_reference_prices.keys())
-    brand_category_affinity = catalog_cfg["brand_category_affinity"]
+
+    allowed_top_categories = list(
+        catalog_cfg.get("external_hm", {}).get("allowed_top_categories", [])
+    )
+
+    if allowed_top_categories:
+        top_categories = [
+            category
+            for category in allowed_top_categories
+            if category in top_category_reference_prices
+        ]
+    else:
+        top_categories = list(top_category_reference_prices.keys())
+
+    if not top_categories:
+        raise ValueError("No top categories available for user generation.")
+
     noise_cfg = simulator_cfg["preference_noise"]
     budget_adjustment_cfg = simulator_cfg["budget_adjustment_by_tier"]
     top_k_categories = int(simulator_cfg["user_preference"]["top_k_categories"])
-    favorite_brand_sampling_cfg = simulator_cfg["favorite_brand_sampling"]
 
     users: list[dict[str, Any]] = []
 
@@ -210,46 +233,49 @@ def generate_users(config: dict[str, Any], rng: random.Random) -> list[dict[str,
         persona_name = sample_persona_name(profiles, rng)
         profile = profiles[persona_name]
 
-        favorite_brand = ""
-        favorite_brand_tier = ""
+        preferred_top_category = ""
+        preferred_top_category_tier = ""
         budget_min = profile.budget_min
         budget_max = profile.budget_max
 
+        preferred_price_tiers = list(getattr(profile, "preferred_price_tiers", []))
+        preferred_top_category_pool = list(getattr(profile, "preferred_top_category_pool", []))
+
         if profile.distribution_mode == "price_based":
             base_distribution = build_price_based_distribution(
-                top_category_reference_prices=top_category_reference_prices,
+                top_category_reference_prices={
+                    category: top_category_reference_prices[category]
+                    for category in top_categories
+                },
                 affordability_alpha=float(profile.affordability_alpha or 1.0),
             )
+
         elif profile.distribution_mode == "prior_based":
             base_distribution = build_prior_distribution(
                 category_prior=profile.category_prior,
                 top_categories=top_categories,
             )
-        elif profile.distribution_mode == "brand_anchor":
-            if not profile.favorite_brand_pool:
-                raise ValueError(
-                    f"Persona '{profile.name}' requires favorite_brand_pool for brand_anchor mode."
-                )
 
-            favorite_brand = sample_favorite_brand(
-                favorite_brand_pool=profile.favorite_brand_pool,
-                rng=rng,
-                sampling_cfg=favorite_brand_sampling_cfg,
+        elif profile.distribution_mode == "top_category_anchor":
+            pool = preferred_top_category_pool or top_categories
+            preferred_top_category = sample_preferred_top_category(pool, rng)
+            preferred_top_category_tier = get_top_category_price_tier(
+                config,
+                preferred_top_category,
             )
-            favorite_brand_tier = get_brand_tier(config, favorite_brand)
 
-            budget_min, budget_max = adjust_budget_for_brand_tier(
+            budget_min, budget_max = adjust_budget_for_price_tier(
                 budget_min=budget_min,
                 budget_max=budget_max,
-                brand_tier=favorite_brand_tier,
+                price_tier=preferred_top_category_tier,
                 budget_adjustment_cfg=budget_adjustment_cfg,
             )
 
-            base_distribution = build_brand_anchor_distribution(
-                favorite_brand=favorite_brand,
-                brand_category_affinity=brand_category_affinity,
+            base_distribution = build_top_category_anchor_distribution(
+                preferred_top_category=preferred_top_category,
                 top_categories=top_categories,
             )
+
         else:
             raise ValueError(
                 f"Unsupported distribution_mode for user generation: {profile.distribution_mode}"
@@ -272,9 +298,9 @@ def generate_users(config: dict[str, Any], rng: random.Random) -> list[dict[str,
             "price_sensitivity": profile.price_sensitivity,
             "base_conversion_rate": profile.base_conversion_rate,
             "preferred_top_categories": "|".join(top_preferred_categories),
-            "preferred_brand_tiers": "|".join(profile.preferred_brand_tiers),
-            "favorite_brand": favorite_brand,
-            "favorite_brand_tier": favorite_brand_tier,
+            "preferred_top_category": preferred_top_category,
+            "preferred_top_category_tier": preferred_top_category_tier,
+            "preferred_price_tiers": "|".join(preferred_price_tiers),
             "budget_min": budget_min,
             "budget_max": budget_max,
             "signup_days_ago": rng.randint(0, 365),
@@ -299,11 +325,11 @@ def save_dataframe(df: pd.DataFrame, output_path: Path, output_format: str) -> N
 
 
 def print_day2_summary(products_df: pd.DataFrame, users_df: pd.DataFrame) -> None:
-    print("\n[Products by brand_tier]")
-    print(products_df["brand_tier"].value_counts())
+    print("\n[Products by price_tier]")
+    print(products_df["price_tier"].value_counts())
 
-    print("\n[Average price by brand_tier]")
-    print(products_df.groupby("brand_tier")["price"].mean().round(0))
+    print("\n[Average price by price_tier]")
+    print(products_df.groupby("price_tier")["price"].mean().round(6))
 
     print("\n[Products by top_category]")
     print(products_df["top_category"].value_counts())
@@ -316,10 +342,10 @@ def print_day2_summary(products_df: pd.DataFrame, users_df: pd.DataFrame) -> Non
     grouped = users_df.groupby("persona")[preference_columns].mean().round(3)
     print(grouped)
 
-    print("\n[Brand loyalist favorite brands]")
-    loyalists = users_df[users_df["persona"] == "brand_loyalist"]
+    print("\n[Top-category loyalist preferred top_category]")
+    loyalists = users_df[users_df["persona"] == "top_category_loyalist"]
     if not loyalists.empty:
-        print(loyalists["favorite_brand"].value_counts())
+        print(loyalists["preferred_top_category"].value_counts())
 
 
 def print_day3_summary(events_df: pd.DataFrame) -> None:
@@ -365,9 +391,8 @@ def print_day3_summary(events_df: pd.DataFrame) -> None:
         print("\n[Purchase by persona]")
         print(purchase_df["persona"].value_counts())
 
-        if "brand_tier" in purchase_df.columns:
-            print("\n[Purchase by brand_tier]")
-            print(purchase_df["brand_tier"].value_counts())
+        print("\n[Purchase by price_tier]")
+        print(purchase_df["price_tier"].value_counts())
 
 
 def run_day2_sample_generation() -> dict[str, Any]:
@@ -381,6 +406,9 @@ def run_day2_sample_generation() -> dict[str, Any]:
 
     products_df = pd.DataFrame(products)
     users_df = pd.DataFrame(users)
+
+    if "product_id" in products_df.columns:
+        products_df["product_id"] = _normalize_article_id(products_df["product_id"])
 
     products_path = _resolve_simulator_file_path(config, "products_file", "products")
     users_path = _resolve_simulator_file_path(config, "users_file", "users")
@@ -414,8 +442,31 @@ def run_day3_event_generation() -> dict[str, Any]:
     if not users_path.exists():
         raise FileNotFoundError(f"users file not found: {users_path}")
 
-    products_df = pd.read_csv(products_path)
-    users_df = pd.read_csv(users_path)
+    products_df = pd.read_csv(
+        products_path,
+        dtype={
+            "product_id": str,
+            "product_code": str,
+            "price_tier": str,
+            "top_category": str,
+            "mid_category": str,
+            "leaf_category": str,
+        },
+    )
+    if "product_id" in products_df.columns:
+        products_df["product_id"] = _normalize_article_id(products_df["product_id"])
+
+    users_df = pd.read_csv(
+        users_path,
+        dtype={
+            "user_id": str,
+            "persona": str,
+            "preferred_top_categories": str,
+            "preferred_top_category": str,
+            "preferred_top_category_tier": str,
+            "preferred_price_tiers": str,
+        },
+    )
 
     from src.simulator.events import generate_events, validate_events
 
