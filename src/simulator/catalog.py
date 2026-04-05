@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-import random
 
-import numpy as np
 import pandas as pd
 
 
@@ -47,13 +45,9 @@ def _prepare_hm_catalog_df(config: dict[str, Any]) -> pd.DataFrame:
         .str.strip()
         .str.replace(r"\.0$", "", regex=True)
     )
-    df["name"] = df["name"].fillna("").astype(str)
-    df["description"] = df["description"].fillna("").astype(str)
-    df["color"] = df["color"].fillna("").astype(str)
 
-    df["top_category"] = df["top_category"].fillna("").astype(str).str.strip()
-    df["mid_category"] = df["mid_category"].fillna("").astype(str).str.strip()
-    df["leaf_category"] = df["leaf_category"].fillna("").astype(str).str.strip()
+    for col in ["name", "description", "color", "top_category", "mid_category", "leaf_category"]:
+        df[col] = df[col].fillna("").astype(str).str.strip()
 
     df["top_category"] = df["top_category"].replace("", "Unknown")
     df["mid_category"] = df["mid_category"].replace("", "Unknown")
@@ -116,32 +110,12 @@ def _prepare_hm_catalog_df(config: dict[str, Any]) -> pd.DataFrame:
     return df
 
 
-def _sample_hm_products(config: dict[str, Any], rng: random.Random) -> list[dict[str, Any]]:
+def generate_products(config: dict[str, Any], rng: object | None = None) -> list[dict[str, Any]]:
     df = _prepare_hm_catalog_df(config)
-    product_count = int(config["simulator"]["scale"]["products"])
-
-    if product_count >= len(df):
-        sampled = df.copy()
-    else:
-        weights = (df["purchase_count"].astype(float).fillna(0.0) + 1.0).to_numpy()
-        probabilities = weights / weights.sum()
-
-        np_rng = np.random.default_rng(int(rng.random() * 1_000_000))
-        chosen_idx = np_rng.choice(
-            len(df),
-            size=product_count,
-            replace=False,
-            p=probabilities,
-        )
-        sampled = df.iloc[chosen_idx].copy()
-
-    sampled = sampled.sort_values(
-        ["purchase_count", "product_id"],
-        ascending=[False, True],
-    ).reset_index(drop=True)
+    df = df.sort_values(["purchase_count", "product_id"], ascending=[False, True]).reset_index(drop=True)
 
     records: list[dict[str, Any]] = []
-    for _, row in sampled.iterrows():
+    for _, row in df.iterrows():
         style_tags = "|".join(
             [
                 tag
@@ -177,10 +151,6 @@ def _sample_hm_products(config: dict[str, Any], rng: random.Random) -> list[dict
         )
 
     return records
-
-
-def generate_products(config: dict[str, Any], rng: random.Random) -> list[dict[str, Any]]:
-    return _sample_hm_products(config, rng)
 
 
 def build_top_category_reference_prices(config: dict[str, Any]) -> dict[str, float]:

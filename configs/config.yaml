@@ -25,12 +25,10 @@ simulator:
     events_file: events.csv
 
   scale:
-    products: 5000
-    users: 1000
-    events: 10000
+    users: 10000
+    events: 1000000
 
   target_scale:
-    products: 50000
     users: 10000
     events: 1000000
 
@@ -155,39 +153,63 @@ simulator:
       Menswear: [Trousers, Sweater, T-shirt, Shirt, Shorts, Hoodie, Jacket, Polo shirt]
       Sport: [T-shirt, Leggings/Tights, Vest top, Trousers, Bra, Shorts, Top, Hoodie]
 
+
+
+
+##retailrocket 데이터셋 기준 (동일 session은 30분 단위로다가 설정)
+## session 구분 30분 단위는 실재 reatailrocket을 사용한 논문 https://arxiv.org/pdf/2404.00261, 및 google analytics의 가이드라인을 따름
+
+##view_to_cart = 0.0221
+##cart_to_purchase = 0.2717
+##direct_purchase_from_view = 0.0010
+
+##이를 반영하여 persona에 맞게 변경
+
+##trendsetter: 0.24/0.34/0.06 → 0.06/0.34/0.005
+##pragmatist: 0.16/0.28/0.03 → 0.035/0.28/0.002
+##value_seeker: 0.18/0.24/0.02 → 0.03/0.24/0.0015
+##top_category_loyalist: 0.26/0.38/0.05 → 0.055/0.36/0.004
+##impulse_buyer: 0.31/0.42/0.09 → 0.08/0.40/0.008
+##careful_explorer: 0.12/0.20/0.02 → 0.02/0.20/0.001
+
     transition_prob:
       trendsetter:
-        view_to_cart: 0.24
-        cart_to_purchase: 0.34
-        direct_purchase_from_view: 0.06
+        view_to_cart: 0.075
+        cart_to_purchase: 0.350
+        direct_purchase_from_view: 0.007
+
       pragmatist:
-        view_to_cart: 0.16
-        cart_to_purchase: 0.28
-        direct_purchase_from_view: 0.03
+        view_to_cart: 0.045
+        cart_to_purchase: 0.290
+        direct_purchase_from_view: 0.003
+
       value_seeker:
-        view_to_cart: 0.18
-        cart_to_purchase: 0.24
-        direct_purchase_from_view: 0.02
+        view_to_cart: 0.038
+        cart_to_purchase: 0.245
+        direct_purchase_from_view: 0.002
+
       top_category_loyalist:
-        view_to_cart: 0.26
-        cart_to_purchase: 0.38
-        direct_purchase_from_view: 0.05
+        view_to_cart: 0.070
+        cart_to_purchase: 0.370
+        direct_purchase_from_view: 0.006
+
       impulse_buyer:
-        view_to_cart: 0.31
-        cart_to_purchase: 0.42
-        direct_purchase_from_view: 0.09
+        view_to_cart: 0.095
+        cart_to_purchase: 0.420
+        direct_purchase_from_view: 0.012
+
       careful_explorer:
-        view_to_cart: 0.12
-        cart_to_purchase: 0.20
-        direct_purchase_from_view: 0.02
+        view_to_cart: 0.028
+        cart_to_purchase: 0.205
+        direct_purchase_from_view: 0.0015
 
     views_per_session_by_persona:
-      trendsetter: [3, 6]
-      pragmatist: [2, 4]
-      value_seeker: [2, 5]
-      top_category_loyalist: [2, 5]
-      impulse_buyer: [2, 4]
-      careful_explorer: [3, 6]
+      trendsetter: [3, 5]
+      pragmatist: [1, 3]
+      value_seeker: [2, 4]
+      top_category_loyalist: [2, 4]
+      impulse_buyer: [1, 3]
+      careful_explorer: [4, 6]
 
   split:
     train_ratio: 0.8
